@@ -22,6 +22,8 @@ def get_temp_total_chunk_on_cuda(chunk: Chunk):
 
     total_temp = torch.zeros(chunk.chunk_size, dtype=chunk.dtype, device=get_current_device())
     gather_list = list(torch.chunk(input=total_temp, chunks=chunk.pg_size, dim=0))
+    # for some reason we have to put a barrier here otherwise it hangs
+    torch.distributed.barrier()
     dist.all_gather(tensor_list=gather_list, tensor=shard_temp, group=chunk.torch_pg)
 
     return total_temp
