@@ -1,6 +1,6 @@
 export WANDB_MODE=offline
 colossalai run --nproc_per_node 8 train_llama.py \
-    --model_name_or_path ~/models/llama-7b-with-tokenizer/ \
+    --model_name_or_path huggyllama/llama-7b \
     --data_path ./alpaca_data.json \
     --output_dir ./trained/saved_model.pt \
     --num_train_epochs 3 \
