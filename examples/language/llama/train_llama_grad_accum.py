@@ -42,20 +42,28 @@ def move_to_cuda(batch, device):
     return {k: v.to(device) for k, v in batch.items()}
 
 
-def train_epoch(epoch, model, optimizer, lr_scheduler, dataloader, booster, coordinator):
+def train_epoch(epoch, model, optimizer, lr_scheduler, dataloader, booster, coordinator, grad_accum_steps=None):
     torch.cuda.synchronize()
     model.train()
+    optimizer.zero_grad()
+    accum = 1
+    if grad_accum_steps:
+        accum = grad_accum_steps
     with tqdm(dataloader, desc=f'Epoch [{epoch + 1}]', disable=not coordinator.is_master()) as pbar:
-        for batch in pbar:
+        for idx, batch in enumerate(pbar):
             # Forward
-            optimizer.zero_grad()
             batch = move_to_cuda(batch, torch.cuda.current_device())
-            outputs = model(use_cache=False, **batch)
-            loss = outputs['loss']
-            # Backward
-            booster.backward(loss, optimizer)
-            optimizer.step()
-            lr_scheduler.step()
+            if grad_accum_steps and (idx+1) % grad_accum_steps != 0:
+                outputs = model(use_cache=False, **batch)
+                loss = outputs['loss'] / accum
+                booster.backward(loss, optimizer)
+            else:
+                outputs = model(use_cache=False, **batch)
+                loss = outputs['loss'] / accum
+                booster.backward(loss, optimizer)
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
             # Print batch loss
             pbar.set_postfix({'loss': loss.item()})
 
@@ -262,6 +270,7 @@ def train():
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
     # Set plugin
     booster_kwargs = {}
+    # booster_kwargs['mixed_precision'] = 'bf16'
     plugin = GeminiPlugin(device=get_current_device(),
                           placement_policy='cuda',
                           precision='bf16',
@@ -277,6 +286,7 @@ def train():
         'epochs': int(training_args.num_train_epochs),
         'warmup_ratio': training_args.warmup_ratio,
         'weight_decay': training_args.weight_decay,
+        'grad_accum_steps': training_args.gradient_accumulation_steps,
     }
 
     dataloader = plugin.prepare_dataloader(data_module['train_dataset'],
@@ -311,7 +321,7 @@ def train():
     # Start finetuning
     logger.info(f"Start finetuning", ranks=[0])
     for epoch in range(config['epochs']):
-       train_epoch(epoch, model, optimizer, lr_scheduler, dataloader, booster, coordinator)
+       train_epoch(epoch, model, optimizer, lr_scheduler, dataloader, booster, coordinator, config['grad_accum_steps'])
 
     # Finish training and evaluate
     logger.info(f"Finish finetuning", ranks=[0])
