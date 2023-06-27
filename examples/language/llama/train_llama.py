@@ -232,6 +232,7 @@ def train():
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
     )
+    model.gradient_checkpointing_enable()
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
